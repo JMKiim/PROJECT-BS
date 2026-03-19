@@ -141,7 +141,7 @@ def calculate_synchrony_mask(data_dict, config, global_stats):
     masks = {}
     for name, cfg in config.items():
         ctype = cfg.get('type')
-        win = int(cfg.get('sync_window', 0.3) * FPS)
+        win = int(cfg.get('sync_window', 1.0) * FPS)
 
         # Numeric & Categorical
         if ctype in ('numeric', 'categorical'):
@@ -345,10 +345,10 @@ def visualize_timeline_optimized(timeline_dir, config_path, start_time=None, end
                 ep = cfg.get('event_params', {})
                 ev = detect_nod_events(
                     vals,
-                    ep.get('fall_z_thresh', 2.0),
+                    ep.get('fall_z_thresh', 1.0),
                     ep.get('rise_z_thresh', -1.0),
-                    ep.get('max_duration', 0.5),
-                    ep.get('min_cycles', 2),
+                    ep.get('max_duration', 0.6),
+                    ep.get('min_cycles', 1),
                     FPS
                 ).astype(bool)
 
@@ -393,7 +393,7 @@ def visualize_timeline_optimized(timeline_dir, config_path, start_time=None, end
         above_raw = (sub ==  1).to_numpy() # F×P
         below_raw = (sub == -1).to_numpy() # F×P
 
-        win = int(config[ind].get('sync_window', 0.3) * FPS)
+        win = int(config[ind].get('sync_window', 1.0) * FPS)
 
         # per-pid 윈도 확장
         ext_above = np.vstack([_extend_bool(above_raw[:, j], win) for j in range(P)]).T  # F×P
@@ -583,8 +583,8 @@ def visualize_timeline_optimized(timeline_dir, config_path, start_time=None, end
 
 if __name__ == '__main__':
     visualize_timeline_optimized(
-        timeline_dir="D:/2025신윤희Data/MediaPipe/24-1/A4/W1/T1",
+        timeline_dir="D:/2025신윤희Data/MediaPipe/23-2/C/W3/T1",
         config_path="config_indicators.json",
-        start_time=1500,
-        end_time=1620
+        start_time=0,
+        end_time=0
     )

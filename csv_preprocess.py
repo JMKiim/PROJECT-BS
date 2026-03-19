@@ -141,5 +141,6 @@ def process_folder(root_dir):
 # 실행
 # ----------------------------
 if __name__ == '__main__':
+    # [수정] 전체 학기/그룹/주차를 처리하도록 루트 경로 설정
     ROOT = 'D:/2025신윤희Data/MediaPipe'
     process_folder(ROOT)

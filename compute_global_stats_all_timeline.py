@@ -53,33 +53,86 @@ def process_participant(args):
 # --------------------------
 # 타임라인별 처리 함수
 # --------------------------
-def process_timeline(timeline_dir):
-    csv_files = [f for f in os.listdir(timeline_dir) if f.endswith("_augmented.csv")]
-    if not csv_files:
-        print(f"[스킵] {timeline_dir} → CSV 없음")
+# --------------------------
+# 타임라인별 처리가 아닌 주차(Week)별 통합 처리 함수
+# --------------------------
+def process_week_group(week_dir):
+    # 1. 주차 내 모든 타임라인 폴더 수집
+    timeline_folders = [
+        os.path.join(week_dir, d) 
+        for d in os.listdir(week_dir) 
+        if os.path.isdir(os.path.join(week_dir, d))
+    ]
+    if not timeline_folders:
         return
 
-    print(f"[시작] {timeline_dir}")
-    tasks = []
-    for file in csv_files:
-        pid = file.replace("_augmented.csv", "").split("_")[-1]
-        csv_path = os.path.join(timeline_dir, file)
-        try:
-            df = pd.read_csv(csv_path)
-            tasks.append((timeline_dir, pid, df))
-        except Exception as e:
-            print(f"[에러] {csv_path}: {e}")
+    print(f"[주차 통합 처리] {week_dir} (총 {len(timeline_folders)}개 타임라인)")
+    
+    # 2. 모든 타임라인의 데이터를 메모리에 로드 (PID별로 통합)
+    #    구조: aggregated_data = { 'P1': [df1, df2...], 'P2': [...] }
+    aggregated_data = {}
+    
+    for t_dir in timeline_folders:
+        csv_files = [f for f in os.listdir(t_dir) if f.endswith("_augmented.csv")]
+        for file in csv_files:
+            pid = file.replace("_augmented.csv", "").split("_")[-1]  # P1, P2...
+            csv_path = os.path.join(t_dir, file)
+            try:
+                df = pd.read_csv(csv_path)
+                if pid not in aggregated_data:
+                    aggregated_data[pid] = []
+                aggregated_data[pid].append(df)
+            except Exception as e:
+                print(f"[에러] 로드 실패: {csv_path} - {e}")
 
-    global_stats = {}
-    with ProcessPoolExecutor() as executor:
-        for pid, stats in executor.map(process_participant, tasks):
-            global_stats[pid] = stats
-            print(f"  ↳ {pid} 완료")
+    if not aggregated_data:
+        print(f"[스킵] 데이터 없음: {week_dir}")
+        return
 
-    out_path = os.path.join(timeline_dir, "global_stats.json")
-    with open(out_path, "w") as f:
-        json.dump(global_stats, f, indent=2)
-    print(f"[완료] {timeline_dir} → global_stats.json 저장됨")
+    # 3. PID별로 병합하여 통계 계산
+    week_stats = {}
+    
+    # 병렬 처리 대신 단순 루프로 처리 (데이터 병합 오버헤드 고려)
+    for pid, dfs in aggregated_data.items():
+        if not dfs: continue
+        full_df = pd.concat(dfs, ignore_index=True)
+        
+        # calculate_stats_for_df는 아래 helper 함수로 분리
+        pid_stat = calculate_stats_for_df(full_df, pid, week_dir)
+        week_stats[pid] = pid_stat
+
+    # 4. 계산된 주차별 통계(week_stats)를 각 타임라인 폴더에 '배포'
+    #    이렇게 하면 single_visualizer.py를 수정하지 않아도 됨
+    for t_dir in timeline_folders:
+        out_path = os.path.join(t_dir, "global_stats.json")
+        with open(out_path, "w", encoding='utf-8') as f:
+            json.dump(week_stats, f, indent=2, ensure_ascii=False)
+        print(f"  -> 저장 완료: {out_path}")
+
+def calculate_stats_for_df(df, pid, distinct_name):
+    # 기존 process_participant 로직을 재사용
+    stats = {}
+    for key, config in INDICATOR_CONFIG.items():
+        if config.get("zscore", False):
+            col = config.get("column")
+            try:
+                values = df[col].astype(float)
+                if "success" in df.columns:
+                    values = values[df["success"] == 1]
+                
+                n = values.dropna().shape[0]
+                if n < 2:
+                    # 데이터 부족 시 기본값 처리
+                    stats[key] = {"mean": 0.0, "std": 1.0}
+                    continue
+
+                mean = np.nanmean(values)
+                std = np.nanstd(values)
+                if std == 0: std = 1.0 # 분모 0 방지
+                stats[key] = {"mean": float(mean), "std": float(std)}
+            except KeyError:
+                continue
+    return stats
 
 # --------------------------
 # 전체 MediaPipe 폴더 순회
@@ -94,10 +147,9 @@ def scan_all_timelines():
             for week in os.listdir(group_path):
                 week_path = os.path.join(group_path, week)
                 if not os.path.isdir(week_path): continue
-                for timeline in os.listdir(week_path):
-                    timeline_dir = os.path.join(week_path, timeline)
-                    if os.path.isdir(timeline_dir):
-                        process_timeline(timeline_dir)
+                
+                # [변경] 타임라인 단위가 아니라 'Week' 단위로 함수 호출
+                process_week_group(week_path)
 
 # --------------------------
 # 실행

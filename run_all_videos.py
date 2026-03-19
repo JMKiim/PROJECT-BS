@@ -7,6 +7,7 @@ from process_single_video import process_video
 
 INPUT_ROOT = "D:/2025신윤희영상정렬"
 OUTPUT_ROOT = "D:/2025신윤희Data/MediaPipe"
+# [수정] 모든 학기 처리
 SEMESTERS = ["23-2", "24-1", "24-2"]
 VIDEO_EXTENSIONS = [".mp4", ".mov", ".mkv"]
 NUM_WORKERS = 4

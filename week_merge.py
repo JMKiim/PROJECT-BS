@@ -235,11 +235,24 @@ def build_week_file(semester: str, group: str, week_base: str):
     print(f"[OK] Saved → {out_path}")
 
 def build_all_weeks():
+    # [수정] 스킵 로직 제거 (모든 학기/그룹 처리)
+    skip_semesters = set() 
+    skip_groups    = set()
+    skip_weeks     = set()
+
     for semester in sorted(os.listdir(ROOT_IN)):
+        if semester in skip_semesters:
+            print(f"[SKIP] {semester} 제외됨")
+            continue
+        
         sem_path = os.path.join(ROOT_IN, semester)
         if not os.path.isdir(sem_path):
             continue
         for group in sorted(os.listdir(sem_path)):
+            if group in skip_groups:
+                print(f"[SKIP] {semester}/{group} 제외됨")
+                continue
+            
             grp_path = os.path.join(sem_path, group)
             if not os.path.isdir(grp_path):
                 continue
@@ -254,6 +267,9 @@ def build_all_weeks():
                 if not parsed:
                     continue
                 base, _, _ = parsed
+                if base in skip_weeks:
+                    continue
+
                 bases.add(base)
 
             for base in sorted(bases, key=lambda b: int(b[1:])):  # 'W2' -> 2

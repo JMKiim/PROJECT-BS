@@ -11,6 +11,7 @@ from concurrent.futures import ProcessPoolExecutor, as_completed
 # ----------------------------
 INPUT_ROOT = "D:/2025신윤희영상정렬"
 OUTPUT_ROOT = "D:/2025신윤희Data/MediaPipe"
+# [수정] 모든 학기 처리
 SEMESTERS = ["23-2", "24-1", "24-2"]
 VIDEO_EXTENSIONS = [".mp4", ".mov", ".mkv"]
 NUM_WORKERS = 4
@@ -18,7 +19,7 @@ NUM_WORKERS = 4
 # Motion Energy 스크립트 옵션
 SAVE_GRAYSCALE_VIDEO = True      # True로 설정하면 그레이스케일 영상(mp4)도 함께 저장
 ENABLE_MOTION_COMP = False     # True로 설정하면 전역 이동 보정 적용
-REPROCESS_EXISTING = False        # True로 설정하면 이미 처리된 파일도 다시 계산 (덮어쓰기)
+REPROCESS_EXISTING = True        # [수정] True로 설정하여 전체 재계산 (덮어쓰기)
 VIDEO_CODEC = cv2.VideoWriter_fourcc(*'mp4v')
 
 # ----------------------------
@@ -108,10 +109,11 @@ def compute_me(video_path, output_dir):
 
         # ME 계산 (첫 프레임에는 ME=0)
         if prev_gray is None:
-            me = 0
+            me = 0.0
         else:
             diff = cv2.absdiff(gray, prev_gray)
-            me = int(diff.sum())
+            # [수정] 해상도 의존성 제거: 픽셀 수로 나누어 '픽셀당 평균 변화량'으로 변경
+            me = diff.sum() / (width * height)
         me_values.append(me)
         prev_gray = gray
         frame_count += 1
