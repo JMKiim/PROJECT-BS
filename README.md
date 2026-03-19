@@ -1,62 +1,96 @@
-# 🎥 Behavioral Synchrony Analysis Pipeline
+# Project Structure & Data Pipeline Documentation
 
-이 프로젝트는 협업 활동 비디오에서 개인별 행동 데이터를 추출하고, 동시성(synchrony)을 시각화하는 파이프라인입니다.
+This document outlines the **active file structure** and **data processing workflow** of the project as of February 2026.
+
+## 1. Data Processing Pipeline
+
+The 8-step process from raw videos to final analytical Excel files.
+
+### Step 1: Video Cropping (Prep)
+*   **Input**: Raw videos + `timeline_info.csv`
+*   **Executable**: `all_video_crop.py`
+*   **Output**: `D:\2025신윤희영상정렬\` (MP4 videos cropped by individual/timeline)
+*   **Description**: Crops long videos into smaller, analyzable segments based on metadata (`timeline_info.csv`).
+
+### Step 2: Feature Extraction (Feature & Motion)
+*   **Input**: Cropped MP4 videos
+*   **Executables**:
+    1.  `run_all_videos.py` (calls `process_single_video.py` internally) → **OpenFace Analysis**
+    2.  `compute_motion_energy.py` → **Motion Energy (ME) Calculation**
+*   **Output**: OpenFace Result CSVs, `_grayscaled.csv` (ME Data)
+
+### Step 3: Data Merge & Augmentation (Augment)
+*   **Input**: OpenFace CSVs + Motion Energy CSVs
+*   **Executable**: `csv_preprocess.py`
+*   **Output**: **`_augmented.csv`** (The core baseline data for analysis)
+*   **Description**: Merges basic features with derived variables (BBox size, Emotion labels, etc.) into a single file.
+
+### Step 4: Global Statistics Calculation (Stats)
+*   **Input**: `_augmented.csv`
+*   **Executable**: `compute_global_stats_all_timeline.py`
+*   **Output**: `global_stats.json` (Generated inside each timeline folder)
+*   **Description**: Pre-calculates the means and standard deviations based on the entire week for Z-score normalization during synchrony analysis.
+
+### Step 5: Synchrony Analysis (Sync Analysis)
+*   **Input**: `_augmented.csv` + `global_stats.json`
+*   **Executable**: `batch_visualize.py` (calls `single_visualizer.py` internally)
+*   **Output**:
+    *   `sync_counts.xlsx`: Simple concurrency counts
+    *   **`sync_mask.xlsx`**: Detailed synchrony masks per frame/level (Source data for merging)
+
+### Step 6: Week Integration (Week Merge)
+*   **Input**: `sync_mask.xlsx` from each timeline
+*   **Executable**: `week_merge.py`
+*   **Output**: `sync_{semester}_{group}_{week}.xlsx` (e.g., `sync_24-2_F_W1.xlsx`)
+*   **Description**: Merges scattered timeline files into a single consolidated weekly file.
+
+### Step 7: Session Splitting (Session Splitting)
+*   **Input**: Consolidated weekly files + **`session_timeline.csv`**
+*   **Executable**: `split_weeks_to_sessions.py`
+*   **Output**: `..._session1.xlsx`, `..._session2.xlsx`
+*   **Description**: Splits weekly data into distinct sessions (Session 1, 2, etc.) based on the boundary timestamps defined in `session_timeline.csv`.
+
+### Step 8: Master File Generation (Master Summary)
+*   **Input**: Session-level Excel files
+*   **Executables**: `masterfile_generator.py` → `master_postprocess.py`
+*   **Output**: `master_enriched.xlsx` (Final raw data matrix)
 
 ---
 
-## 📁 파이프라인 구성
+## 2. Special Pipeline
 
-### 0. `timeline_info.csv`
-- 각 학기/그룹/주차 비디오의 타임라인 정보 메타데이터
-- 컬럼: `학기, 그룹명, 주차, 파일버전, 타임라인인덱스, 시작시간, 종료시간, 인원수`
-
-### 1. `all_video_crop.py`
-- `timeline_info.csv`를 기반으로 비디오를 개인 단위로 분할
-- 예: `A4_W1_T1_P1.mp4` (그룹 A4, 주차 W1, 타임라인 1, 참가자 1)
-
-### 2-1. `run_all_videos.py`
-- 생성된 개인 비디오에 OpenFace 분석 수행
-- 결과: 얼굴 특징값 CSV + OpenFace 비디오
-
-### 2-2. `compute_motion_energy.py`
-- 생성된 개인 비디오를 GrayScaled 
-- 결과: 프레임간 픽셀들의 밝기 변화량의 합 CSV + GrayScaled 비디오(선택)
-
-### 4. `csv_preprocess.py`
-- OpenFace 결과 CSV에 다음 컬럼 추가:
-  - `ME`: Motion Energy 값
-  - `ME_log`: log(ME+1) 값
-  - `bbox_area`: 얼굴 bounding box 면적
-  - `emotion`: 감정 분류 (7)
-  - `valence_label`: 감정 매핑 (positive, neutral, negative)
-  - `pitch_vel`: pitch 속도 값
-- 결과: 타임라인의 각 참가자마다 _augmented.csv 생성
-
-### 5. `config_indicators.json`
-- 분석 지표의 임계값 및 타입 설정 (예: `numeric`, `categorical`)
-
-### 6. `compute_global_stats_all_timeline.py`
-- 지표별 전역 통계값 계산 (평균, 표준편차 등)
-- 결과: 각 타임라인 폴더에 `global_stats.json` 저장
-
-### 7. `optimized_visualizer_2.py`
-- 동시성 분석 결과 시각화
-- 입력: `config_indicators.json`, `global_stats.json`, 전처리된 CSV
+### Wide Format Data Generation
+An independent process to generate Wide Format data specifically requested for statistical analysis (e.g., SPSS).
+*   **Executable**: `Requested_Longformat.py`
+*   **Input**: `_augmented.csv`, `timeline_info.csv`, **`session_timeline.csv`**
+*   **Output**: `D:\2025EE_Final_Output_Wide_Optimized\{semester}\{group}\Integrated_...xlsx`
+*   **Note**: Bypasses the standard pipeline (Steps 5-8) and generates directly from augmented data (Step 3). Requires `session_timeline.csv`.
 
 ---
 
-## ✅ 전체 흐름 요약
+## 3. Core Files Summary
 
-```mermaid
-graph TD
-  A[timeline_info.csv] --> B[all_video_crop.py]
-  B --> C[run_all_videos.py]
-  B --> D[comput_motion_energy.py]
-  C --> E[csv_preprocess.py]
-  D --> E
-  E --> F[compute_global_stats_all_timeline.py]
-  F --> G[optimized_visualizer_2.py]
-  H[config_indicators.json] --> F
-  H --> G
-  F --> I[global_stats.json]
-  I --> G
+| Category | Filename | Role |
+| :--- | :--- | :--- |
+| **Metadata** | **`timeline_info.csv`** | Video segment boundaries (Project-wide basis) |
+| | **`session_timeline.csv`** | Session split points (Crucial for Phase 1/2 distinction) |
+| | **`config_indicators.json`** | Analysis indicators setup and threshold values |
+| **Executables** | `csv_preprocess.py` | "Data Factory" - Prepares raw data for analysis |
+| | `single_visualizer.py` | Core synchrony calculation logic |
+| | `week_merge.py` | Merges Timelines → Weeks |
+| | `split_weeks_to_sessions.py` | Splits Weeks → Sessions |
+| | `Requested_Longformat.py` | Wide format converter for statistical analysis |
+
+---
+
+## 4. Data Directory Map
+
+```text
+D:\2025신윤희Data\MediaPipe\  (Top-level raw data root)
+└── {Semester} \ {Group} \ {Week} \ {Timeline}
+    ├── {Video}_augmented.csv      <-- [CORE] Step 3 output (Augmented Data)
+    ├── {Video}_grayscaled.csv     <-- Motion Energy data
+    ├── global_stats.json          <-- Statistics cache
+    ├── sync_counts.xlsx           <-- Simple sync counts
+    └── sync_mask.xlsx             <-- Synchrony map (Step 5 output)
+```

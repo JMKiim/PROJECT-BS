@@ -1,3 +1,27 @@
 __pycache__/
 cropped_persons/
+*.log
+*.bak
+*.tmp
+Thumbs.db
+.DS_Store
+.vscode/
+.idea/
+
+# Legacy/One-off Scripts
+legacy/
 crop_for_23-2.py
+leagacy_visualizer.py
+23-2downsample.py
+pyfeattest.py
+check_header.py
+test.py
+pyfeat_test/
+uncompress.py
+single_video_crop.py
+compute_deepface_analysis.py
+
+# Temp Configs/Data
+temp_session_timeline.csv
+temp_timeline.csv
+config_indicators_temp.json
