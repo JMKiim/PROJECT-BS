@@ -1,19 +1,15 @@
+"""Crop group recordings into timed participant clips."""
+from bs.settings import path, tool
 import os
 import subprocess
 import pandas as pd
 import cv2
-
-# -------------------------------
 # 설정
-# -------------------------------
-ROOT_DIR = "D:/2025신윤희영상정렬"
-CSV_PATH = "timeline_info.csv"  # 같은 폴더에 있어야 함
-SEMESTER_DIRS = ["24-1", "24-2"]
+ROOT_DIR = str(path('raw_video_dir'))
+CROP_DIR = str(path('cropped_video_dir'))
+CSV_PATH = str(path('timeline_metadata'))  # 같은 폴더에 있어야 함
 VIDEO_EXTENSIONS = [".mp4", ".mov", ".mkv"]
-
-# -------------------------------
 # 유틸 함수
-# -------------------------------
 
 def get_video_resolution(path):
     cap = cv2.VideoCapture(path)
@@ -91,7 +87,7 @@ def get_crop_coords(num_people, width, height):
 
 def run_ffmpeg_cut(input_path, start_time, end_time, output_path):
     cmd = [
-        "ffmpeg", "-y",
+        tool('ffmpeg'), "-y",
         "-ss", start_time, "-to", end_time,
         "-i", input_path,
         "-r", "15",
@@ -99,39 +95,27 @@ def run_ffmpeg_cut(input_path, start_time, end_time, output_path):
         "-c:a", "aac",
         output_path
     ]
-    subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL)
 
 def run_ffmpeg_crop(input_path, x, y, w, h, output_path):
     crop_filter = f"crop={w}:{h}:{x}:{y}"
     cmd = [
-        "ffmpeg", "-y",
+        tool('ffmpeg'), "-y",
         "-i", input_path,
         "-vf", crop_filter,
         "-c:v", "libx264",
         "-c:a", "aac",
         output_path
     ]
-    subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-
-# -------------------------------
-# 보조: 타임라인+crop 개별 생성 (수정된 로직)
-# -------------------------------
+    subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL)
 
 def ensure_timeline_and_crops(group, week, version, t_idx, n_people, input_path, start, end, out_folder):
     folder_name = f"{group}_{week}{'' if version == '없음' else version}"
     timeline_name = f"{folder_name}_T{t_idx}.mp4"
     timeline_path = os.path.join(out_folder, timeline_name)
 
-    # 핵심 수정: 타임라인 영상이 존재하면, 모든 작업을 건너뛰고 함수를 즉시 종료합니다.
-    if os.path.exists(timeline_path):
-        print(f"[스킵] 메인 타임라인({timeline_name})이 이미 존재하여 모든 관련 작업을 건너뜁니다.")
-        return # 여기서 함수가 완전히 종료됨
-
-    # --- 아래 코드는 타임라인 영상이 존재하지 않을 때만 실행됩니다 ---
-
-    # 1. 타임라인 컷 생성 (존재 여부 재확인 불필요)
-    print(f"[생성] 타임라인 컷 만들기: {timeline_name}")
-    run_ffmpeg_cut(input_path, start, end, timeline_path)
+    if not os.path.exists(timeline_path):
+        run_ffmpeg_cut(input_path, start, end, timeline_path)
 
     # 2. crop 생성 (각 participant)
     try:
@@ -147,18 +131,14 @@ def ensure_timeline_and_crops(group, week, version, t_idx, n_people, input_path,
     for pid, (x, y, w, h) in enumerate(coords, start=1):
         crop_name = f"{folder_name}_T{t_idx}_P{pid}.mp4"
         crop_path = os.path.join(out_folder, crop_name)
-        
-        # 핵심 수정: 크롭 영상의 존재 여부를 묻지 않고 항상 생성(덮어쓰기)합니다.
         print(f"[생성] crop 영상 만들기: {crop_name}")
-        run_ffmpeg_crop(timeline_path, x, y, w, h, crop_path)
-
-# -------------------------------
+        if not os.path.exists(crop_path):
+            run_ffmpeg_crop(timeline_path, x, y, w, h, crop_path)
 # 메인 처리 루프
-# -------------------------------
 
 def process_all_videos():
     df = pd.read_csv(CSV_PATH)
-    for semester in SEMESTER_DIRS:
+    for semester in sorted(df["학기"].dropna().astype(str).unique()):
         semester_path = os.path.join(ROOT_DIR, semester)
         if not os.path.isdir(semester_path):
             continue
@@ -201,7 +181,7 @@ def process_all_videos():
                 print(f"[처리 중] {file}")
                 # 출력 폴더 확보 (있어도 누락만 채움)
                 folder_name = f"{group}_{week}{'' if version == '없음' else version}"
-                out_folder = os.path.join(group_path, folder_name)
+                out_folder = os.path.join(CROP_DIR, semester, group, folder_name)
                 os.makedirs(out_folder, exist_ok=True)
 
                 for _, row in matched.iterrows():

@@ -1,15 +1,14 @@
+"""Build session-level synchrony summaries."""
+from bs.settings import path, tool
 import os
 import re
 import json
 import pandas as pd
 import numpy as np
-
-# ====== 사용자 환경 ======
-ROOT_OUT = r"D:/2025EE_Final_Output"            # 세션 엑셀들이 있는 루트 (semester/group/…)
-CONFIG_PATH = r"D:/2025신윤희Code/config_indicators.json"
+ROOT_OUT = str(path('results_dir'))            # 세션 엑셀들이 있는 루트 (semester/group/…)
+CONFIG_PATH = str(path('indicators'))
 MASTER_OUT = os.path.join(ROOT_OUT, "master_sync_summary.xlsx")
 FPS = 15
-# ========================
 
 # 파일명 패턴: sync_{sem}_{grp}_{week}_session{n}.xlsx
 SESSION_FILE_RE = re.compile(r"^sync_(?P<sem>[^_]+)_(?P<grp>[^_]+)_(?P<week>.+)_session(?P<phase>\d+)\.xlsx$")
@@ -165,6 +164,8 @@ def build_master():
 
                     # 최대 인원수
                     n_members = int(meta["n_members"])
+                    if n_members > 5:
+                        raise ValueError("Summary supports up to five members; retain level workbooks for larger groups")
 
                     # k0..k5 구성 (최대인원 초과 레벨은 0)
                     k_values = []
@@ -182,7 +183,7 @@ def build_master():
 
                     row = {
                         "SEMESTER_TEAM_ID": meta["SEMESTER_TEAM_ID"],
-                        "WEEK": week_num,                     # ★ 숫자만 기록
+                        "WEEK": week_num,                     # 숫자만 기록
                         "PHASE": int(meta["PHASE"]),
                         "measurement": m,
                         "FPS": FPS,

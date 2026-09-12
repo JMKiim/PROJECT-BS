@@ -1,13 +1,14 @@
-# week_merge_no_recalc.py
+"""Concatenate timeline masks into weekly workbooks."""
+from bs.settings import path, tool
 import os
 import re
 import json
 import numpy as np
 import pandas as pd
 
-ROOT_IN  = r"D:/2025신윤희Data/MediaPipe"
-ROOT_OUT = r"D:/2025EE_Final_Output"
-CONFIG_PATH = "config_indicators.json"   # 지표 정렬용(있으면 사용)
+ROOT_IN  = str(path('features_dir'))
+ROOT_OUT = str(path('results_dir'))
+CONFIG_PATH = str(path('indicators'))   # 지표 정렬용(있으면 사용)
 FPS = 15
 
 WEEK_RE = re.compile(r"^W(\d+)(?:\((\d+)\))?$")   # W2 / W2(1) / W2(2) ...
@@ -104,7 +105,7 @@ def build_week_file(semester: str, group: str, week_base: str):
         timelines = []
         for tl_name in os.listdir(week_path):
             tl_path = os.path.join(week_path, tl_name)
-            if not os.path.isdir(tl_path): 
+            if not os.path.isdir(tl_path):
                 continue
             tl_idx = parse_timeline_folder(tl_name)
             if tl_idx is None:
@@ -124,24 +125,18 @@ def build_week_file(semester: str, group: str, week_base: str):
             except Exception as e:
                 print(f"[WARN] Read fail {xlsx}: {e}")
                 continue
-
-            # ---- RawMask 이어붙이기 준비 ----
             n_raw = df_raw.shape[0]
             if n_raw > 0:
                 rawmask_union = df_raw.columns if rawmask_union is None else rawmask_union.union(df_raw.columns)
                 df_raw.index = df_raw.index + offset_raw
                 rawmask_dfs.append(df_raw)
                 offset_raw += n_raw
-
-            # ---- PerFrameLevels 이어붙이기 준비 ----
             n_pfl = df_pfl.shape[0]
             if n_pfl > 0:
                 pfl_union = df_pfl.columns if pfl_union is None else pfl_union.union(df_pfl.columns)
                 df_pfl.index = df_pfl.index + offset_pfl
                 pfl_dfs.append(df_pfl)
                 offset_pfl += n_pfl
-
-            # ---- LevelCounts 합산 ----
             if df_lc.shape[0] > 0:
                 if lc_sum is None:
                     lc_sum = df_lc.copy()
@@ -152,8 +147,6 @@ def build_week_file(semester: str, group: str, week_base: str):
                     lc_sum = lc_sum.reindex(index=new_index, columns=new_cols, fill_value=0)
                     df_lc  = df_lc.reindex(index=new_index, columns=new_cols, fill_value=0)
                     lc_sum = lc_sum + df_lc
-
-            # ---- UsedTimelines ----
             # RawMask 기준 프레임 수로 기록 (PerFrameLevels와 동일해야 정상)
             frames = int(n_raw)
             dur_s  = round(frames / FPS, 2)
@@ -172,8 +165,6 @@ def build_week_file(semester: str, group: str, week_base: str):
     if not rawmask_dfs and not pfl_dfs and lc_sum is None:
         print(f"[SKIP] Nothing to merge: {semester}/{group}/{week_base}")
         return
-
-    # ---- 컬럼 정렬/정규화 & 이어붙이기 ----
     # RawMask
     if rawmask_dfs:
         rawmask_union = _sort_multi_cols(rawmask_union, indicator_order)
@@ -209,8 +200,6 @@ def build_week_file(semester: str, group: str, week_base: str):
         lc_merged = pd.DataFrame()
 
     used_df = pd.DataFrame(used_rows).sort_values(by=["week_version", "timeline_index"]).reset_index(drop=True)
-
-    # ---- 저장 ----
     ensure_dir(out_group_dir)
     out_fname = f"sync_{semester}_{group}_{week_base}.xlsx"
     out_path  = os.path.join(out_group_dir, out_fname)
@@ -235,8 +224,8 @@ def build_week_file(semester: str, group: str, week_base: str):
     print(f"[OK] Saved → {out_path}")
 
 def build_all_weeks():
-    # [수정] 스킵 로직 제거 (모든 학기/그룹 처리)
-    skip_semesters = set() 
+    # 스킵 로직 제거 (모든 학기/그룹 처리)
+    skip_semesters = set()
     skip_groups    = set()
     skip_weeks     = set()
 
@@ -244,7 +233,7 @@ def build_all_weeks():
         if semester in skip_semesters:
             print(f"[SKIP] {semester} 제외됨")
             continue
-        
+
         sem_path = os.path.join(ROOT_IN, semester)
         if not os.path.isdir(sem_path):
             continue
@@ -252,7 +241,7 @@ def build_all_weeks():
             if group in skip_groups:
                 print(f"[SKIP] {semester}/{group} 제외됨")
                 continue
-            
+
             grp_path = os.path.join(sem_path, group)
             if not os.path.isdir(grp_path):
                 continue

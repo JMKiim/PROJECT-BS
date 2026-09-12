@@ -1,24 +1,20 @@
+"""Add synchrony weights and session assessment scores."""
+from bs.settings import path, tool
 import os
 import re
 import numpy as np
 import pandas as pd
-from typing import Optional  # ★ 추가: 3.8 호환
-
-# =========================
+from typing import Optional
 # 경로 설정
-# =========================
-ROOT_OUT   = r"D:/2025EE_Final_Output"
+ROOT_OUT   = str(path('results_dir'))
 MASTER_IN  = os.path.join(ROOT_OUT, "master_sync_summary.xlsx")
 MASTER_OUT = os.path.join(ROOT_OUT, "master_enriched.xlsx")
-CPS_PATH   = r"D:/2025EE_Final_Output/CPS_Score.xlsx"   # 업로드된 경로
+CPS_PATH   = str(path('assessment_file'))
 
 # frames_k 고정 세트 (0~5 수준 사용)
 K_COLS = [f"frames_k{i}" for i in range(6)]
 DERIVED_COLS = ["frames_half", "frames_duo"]  # 없으면 0으로 보완
-
-# =========================
 # 유틸 함수
-# =========================
 def ensure_cols(df: pd.DataFrame, cols, fill_val=0):
     for c in cols:
         if c not in df.columns:
@@ -65,7 +61,7 @@ def read_cps_scores_per_session(
     cps_path: str,
     sheet_name: str,
     semester_long: str,
-    colmap_hint: Optional[dict] = None,  # ★ 변경: Optional 사용
+    colmap_hint: Optional[dict] = None,  # 변경: Optional 사용
 ) -> pd.DataFrame:
     """
     세션 단위(CPS) 점수 파싱 → (SEMESTER_TEAM_ID, WEEK, PHASE) 점수 DF 반환
@@ -201,80 +197,73 @@ def read_all_cps_scores(cps_path: str) -> pd.DataFrame:
         )
         parts.append(df_one)
     return pd.concat(parts, ignore_index=True)
-
-# =========================
 # 1) 마스터 읽기
-# =========================
-df = pd.read_excel(MASTER_IN)
+def main():
+    df = pd.read_excel(MASTER_IN)
 
-# 정리: WEEK/PHASE 정수화, 필수 컬럼 보장
-df["WEEK"]  = df["WEEK"].apply(to_int_safe)
-df["PHASE"] = df["PHASE"].apply(to_int_safe)
-df = ensure_cols(df, K_COLS + DERIVED_COLS, fill_val=0)
+    # 정리: WEEK/PHASE 정수화, 필수 컬럼 보장
+    df["WEEK"]  = df["WEEK"].apply(to_int_safe)
+    df["PHASE"] = df["PHASE"].apply(to_int_safe)
+    df = ensure_cols(df, K_COLS + DERIVED_COLS, fill_val=0)
+    # 2) 가중합 파생 컬럼 (전체/half/duo)
+    weights_linear = {f"frames_k{k}": k for k in range(1, 6)}           # 1..5
+    weights_square = {f"frames_k{k}": (k**2) for k in range(1, 6)}       # 1,4,9,16,25
+    weights_exp    = {f"frames_k{k}": (10**(k-1)) for k in range(1, 6)}  # 1,10,100,1000,10000
 
-# =========================
-# 2) 가중합 파생 컬럼 (전체/half/duo)
-# =========================
-weights_linear = {f"frames_k{k}": k for k in range(1, 6)}           # 1..5
-weights_square = {f"frames_k{k}": (k**2) for k in range(1, 6)}       # 1,4,9,16,25
-weights_exp    = {f"frames_k{k}": (10**(k-1)) for k in range(1, 6)}  # 1,10,100,1000,10000
+    def weighted_sum(row, weights):
+        return sum(row.get(col, 0) * w for col, w in weights.items())
 
-def weighted_sum(row, weights):
-    return sum(row.get(col, 0) * w for col, w in weights.items())
+    def weighted_sum_kmin(row, weights, k_min):
+        total = 0
+        for k in range(max(1, k_min), 6):  # 1..5
+            col = f"frames_k{k}"
+            total += row.get(col, 0) * weights.get(col, 0)
+        return total
 
-def weighted_sum_kmin(row, weights, k_min):
-    total = 0
-    for k in range(max(1, k_min), 6):  # 1..5
-        col = f"frames_k{k}"
-        total += row.get(col, 0) * weights.get(col, 0)
-    return total
+    # 전체
+    df["LINEAR"]      = df.apply(lambda r: weighted_sum(r, weights_linear), axis=1)
+    df["SQUARE"]      = df.apply(lambda r: weighted_sum(r, weights_square), axis=1)
+    df["EXPONENTIAL"] = df.apply(lambda r: weighted_sum(r, weights_exp), axis=1)
 
-# 전체
-df["LINEAR"]      = df.apply(lambda r: weighted_sum(r, weights_linear), axis=1)
-df["SQUARE"]      = df.apply(lambda r: weighted_sum(r, weights_square), axis=1)
-df["EXPONENTIAL"] = df.apply(lambda r: weighted_sum(r, weights_exp), axis=1)
+    # half (k >= ceil(n_members/2))
+    def k_half_min(row):
+        nm = row.get("n_members", 0)
+        try:
+            nm = int(nm)
+        except:
+            nm = 0
+        kh = int(np.ceil(nm / 2.0))
+        return min(max(kh, 1), 5)
 
-# half (k >= ceil(n_members/2))
-def k_half_min(row):
-    nm = row.get("n_members", 0)
-    try:
-        nm = int(nm)
-    except:
-        nm = 0
-    kh = int(np.ceil(nm / 2.0))
-    return min(max(kh, 1), 5)
+    df["LINEAR_half"]      = df.apply(lambda r: weighted_sum_kmin(r, weights_linear, k_half_min(r)), axis=1)
+    df["SQUARE_half"]      = df.apply(lambda r: weighted_sum_kmin(r, weights_square, k_half_min(r)), axis=1)
+    df["EXPONENTIAL_half"] = df.apply(lambda r: weighted_sum_kmin(r, weights_exp,  k_half_min(r)), axis=1)
 
-df["LINEAR_half"]      = df.apply(lambda r: weighted_sum_kmin(r, weights_linear, k_half_min(r)), axis=1)
-df["SQUARE_half"]      = df.apply(lambda r: weighted_sum_kmin(r, weights_square, k_half_min(r)), axis=1)
-df["EXPONENTIAL_half"] = df.apply(lambda r: weighted_sum_kmin(r, weights_exp,  k_half_min(r)), axis=1)
+    # duo (k >= 2)
+    df["LINEAR_duo"]      = df.apply(lambda r: weighted_sum_kmin(r, weights_linear, 2), axis=1)
+    df["SQUARE_duo"]      = df.apply(lambda r: weighted_sum_kmin(r, weights_square, 2), axis=1)
+    df["EXPONENTIAL_duo"] = df.apply(lambda r: weighted_sum_kmin(r, weights_exp,    2), axis=1)
 
-# duo (k >= 2)
-df["LINEAR_duo"]      = df.apply(lambda r: weighted_sum_kmin(r, weights_linear, 2), axis=1)
-df["SQUARE_duo"]      = df.apply(lambda r: weighted_sum_kmin(r, weights_square, 2), axis=1)
-df["EXPONENTIAL_duo"] = df.apply(lambda r: weighted_sum_kmin(r, weights_exp,    2), axis=1)
+    # 23-2 & PHASE==3 드롭 (병합 전이 깔끔)
+    sem_col = df.get("SEMESTER_TEAM_ID")
+    if sem_col is not None:
+        df = df[~((df["PHASE"] == 3) & (df["SEMESTER_TEAM_ID"].astype(str).str.startswith("2023-2")))]
+    # 3) CPS 점수 병합 (세션 단위)
+    cps_all = read_all_cps_scores(CPS_PATH)
 
-# ★ 23-2 & PHASE==3 드롭 (병합 전이 깔끔)
-sem_col = df.get("SEMESTER_TEAM_ID")
-if sem_col is not None:
-    df = df[~((df["PHASE"] == 3) & (df["SEMESTER_TEAM_ID"].astype(str).str.startswith("2023-2")))]
+    df = df.drop(columns=["TOTAL","CRITICAL","CREATIVE"], errors="ignore")
+    df = df.merge(cps_all, on=["SEMESTER_TEAM_ID", "WEEK", "PHASE"], how="left")
+    # 4) 정렬 & 저장 (Master + measurement별 시트)
+    df = df.sort_values(by=["SEMESTER_TEAM_ID", "WEEK", "PHASE", "measurement"]).reset_index(drop=True)
 
-# =========================
-# 3) CPS 점수 병합 (세션 단위)
-# =========================
-cps_all = read_all_cps_scores(CPS_PATH)
+    with pd.ExcelWriter(MASTER_OUT, engine="openpyxl") as writer:
+        df.to_excel(writer, sheet_name="Master", index=False)
+        for m in df["measurement"].astype(str).unique():
+            sub = df[df["measurement"].astype(str) == m].copy()
+            sub.to_excel(writer, sheet_name=m[:31], index=False)  # 시트명 31자 제한
 
-df = df.drop(columns=["TOTAL","CRITICAL","CREATIVE"], errors="ignore")
-df = df.merge(cps_all, on=["SEMESTER_TEAM_ID", "WEEK", "PHASE"], how="left")
+    print(f"[OK] Saved → {MASTER_OUT}")
 
-# =========================
-# 4) 정렬 & 저장 (Master + measurement별 시트)
-# =========================
-df = df.sort_values(by=["SEMESTER_TEAM_ID", "WEEK", "PHASE", "measurement"]).reset_index(drop=True)
 
-with pd.ExcelWriter(MASTER_OUT, engine="openpyxl") as writer:
-    df.to_excel(writer, sheet_name="Master", index=False)
-    for m in df["measurement"].astype(str).unique():
-        sub = df[df["measurement"].astype(str) == m].copy()
-        sub.to_excel(writer, sheet_name=m[:31], index=False)  # 시트명 31자 제한
-
-print(f"[OK] Saved → {MASTER_OUT}")
+if __name__ == "__main__":
+    main()

@@ -1,3 +1,5 @@
+"""Calculate mean absolute grayscale frame differences."""
+from bs.settings import path, tool
 import os
 import sys
 import re
@@ -5,36 +7,26 @@ import cv2
 import numpy as np
 import pandas as pd
 from concurrent.futures import ProcessPoolExecutor, as_completed
-
-# ----------------------------
 # 설정
-# ----------------------------
-INPUT_ROOT = "D:/2025신윤희영상정렬"
-OUTPUT_ROOT = "D:/2025신윤희Data/MediaPipe"
-# [수정] 모든 학기 처리
-SEMESTERS = ["23-2", "24-1", "24-2"]
+INPUT_ROOT = str(path('cropped_video_dir'))
+OUTPUT_ROOT = str(path('features_dir'))
+# 모든 학기 처리
 VIDEO_EXTENSIONS = [".mp4", ".mov", ".mkv"]
 NUM_WORKERS = 4
 
 # Motion Energy 스크립트 옵션
-SAVE_GRAYSCALE_VIDEO = True      # True로 설정하면 그레이스케일 영상(mp4)도 함께 저장
+SAVE_GRAYSCALE_VIDEO = False      # True로 설정하면 그레이스케일 영상(mp4)도 함께 저장
 ENABLE_MOTION_COMP = False     # True로 설정하면 전역 이동 보정 적용
-REPROCESS_EXISTING = True        # [수정] True로 설정하여 전체 재계산 (덮어쓰기)
+REPROCESS_EXISTING = False        # True로 설정하여 전체 재계산 (덮어쓰기)
 VIDEO_CODEC = cv2.VideoWriter_fourcc(*'mp4v')
-
-# ----------------------------
 # 로그 저장용
-# ----------------------------
 SKIP_LOG = []
 FAIL_LOG = []
-
-# ----------------------------
 # 처리할 비디오 목록 생성 (학기/그룹/주차(A4_W1) 폴더 구조 반영)
 # 개인 영상(Px)만 포함
-# ----------------------------
 def find_all_videos():
     tasks = []
-    for sem in SEMESTERS:
+    for sem in sorted(os.listdir(INPUT_ROOT)):
         sem_dir = os.path.join(INPUT_ROOT, sem)
         if not os.path.isdir(sem_dir):
             continue
@@ -65,10 +57,7 @@ def find_all_videos():
                     output_dir = os.path.join(OUTPUT_ROOT, sem, group, week, timeline)
                     tasks.append((input_path, output_dir))
     return tasks
-
-# ----------------------------
 # Motion Energy 계산 함수
-# ----------------------------
 def compute_me(video_path, output_dir):
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
@@ -112,7 +101,7 @@ def compute_me(video_path, output_dir):
             me = 0.0
         else:
             diff = cv2.absdiff(gray, prev_gray)
-            # [수정] 해상도 의존성 제거: 픽셀 수로 나누어 '픽셀당 평균 변화량'으로 변경
+            # 해상도 의존성 제거: 픽셀 수로 나누어 '픽셀당 평균 변화량'으로 변경
             me = diff.sum() / (width * height)
         me_values.append(me)
         prev_gray = gray
@@ -131,10 +120,7 @@ def compute_me(video_path, output_dir):
     out_csv = os.path.join(output_dir, f"{base_name}_grayscaled.csv")
     df.to_csv(out_csv, index=False)
     print(f"[INFO] Saved ME CSV: {out_csv}")
-
-# ----------------------------
 # 안전 처리 래퍼
-# ----------------------------
 def safe_process(task):
     video_path, output_dir = task
     base_name = os.path.splitext(os.path.basename(video_path))[0]
@@ -165,11 +151,8 @@ def safe_process(task):
         compute_me(video_path, output_dir)
     except Exception as e:
         FAIL_LOG.append(video_path)
-        print(f"[실패] {video_path} → {e}")
-
-# ----------------------------
+        raise RuntimeError(f"Motion extraction failed: {video_path}") from e
 # 메인 실행
-# ----------------------------
 def main():
     tasks = find_all_videos()
     print(f"[INFO] 총 {len(tasks)}개 개인 비디오를 병렬({NUM_WORKERS}) 처리합니다.")

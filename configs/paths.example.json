@@ -1,0 +1,23 @@
+{
+  "raw_video_dir": "../PROJECT-BS-data/videos/raw",
+  "cropped_video_dir": "../PROJECT-BS-data/videos/cropped",
+  "features_dir": "../PROJECT-BS-data/features",
+  "results_dir": "../PROJECT-BS-data/results/events",
+  "signals_dir": "../PROJECT-BS-data/results/signals",
+  "timeline_metadata": "../PROJECT-BS-data/metadata/timeline_info.csv",
+  "session_metadata": "../PROJECT-BS-data/metadata/session_timeline.csv",
+  "assessment_file": "../PROJECT-BS-data/assessments/scores.xlsx",
+  "normalization_input": "../PROJECT-BS-data/results/events/master_sync_summary.xlsx",
+  "indicators": "configs/indicators.json",
+  "mea_video_dir": "../PROJECT-BS-data/videos/paired",
+  "head_dir": "../PROJECT-BS-data/head",
+  "mea_dir": "../PROJECT-BS-data/mea",
+  "prepared_dir": "../PROJECT-BS-data/prepared",
+  "wavelet_results_dir": "../PROJECT-BS-data/results/wavelet",
+  "wavelet_manifest": "../PROJECT-BS-data/metadata/wavelet_sessions.json",
+  "roi_config": "../PROJECT-BS-data/metadata/roi.json",
+  "wavelet_toolbox_dir": "../PROJECT-BS-tools/ASToolbox2018/Functions",
+  "openface_executable": "FeatureExtraction.exe",
+  "ffmpeg": "ffmpeg",
+  "matlab": "matlab"
+}

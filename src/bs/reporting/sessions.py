@@ -1,18 +1,17 @@
+"""Split weekly masks using private timeline metadata."""
+from bs.settings import path, tool
 import os, re, json
 import pandas as pd
 import numpy as np
-
-# ============== 사용자 환경 설정 ==============
-ROOT_OUT = r"D:/2025EE_Final_Output"        # 주차 통합 엑셀들이 있는 루트 (sync_{sem}_{grp}_{week}.xlsx)
+ROOT_OUT = str(path('results_dir'))        # 주차 통합 엑셀들이 있는 루트 (sync_{sem}_{grp}_{week}.xlsx)
 FPS = 15
 
 # CSV 경로
-TIMELINE_INFO_CSV    = r"D:/2025신윤희Code/timeline_info.csv"      # 학기,그룹명,주차,파일버전,타임라인인덱스,시작시간,종료시간,인원수
-SESSION_TIMELINE_CSV = r"D:/2025신윤희Code/session_timeline.csv"   # 학기,그룹명,주차,파일버전,분기시간,세션  (타임라인인덱스 없음)
+TIMELINE_INFO_CSV    = str(path('timeline_metadata'))      # 학기,그룹명,주차,파일버전,타임라인인덱스,시작시간,종료시간,인원수
+SESSION_TIMELINE_CSV = str(path('session_metadata'))   # 학기,그룹명,주차,파일버전,분기시간,세션  (타임라인인덱스 없음)
 
 # 지표 순서 고정을 위해 사용
-CONFIG_PATH = r"D:/2025신윤희Code/config_indicators.json"
-# ============================================
+CONFIG_PATH = str(path('indicators'))
 
 WEEK_VER_RE = re.compile(r"^\((\d+)\)$")   # "(1)" -> 1
 PID_NUM_RE  = re.compile(r"(\d+)")
@@ -49,8 +48,6 @@ def extract_sem_grp_week(path: str):
         return sem, grp, week
     except:
         return None, None, None
-
-# ---------------- config 지표 순서 고정 ----------------
 def load_indicator_order(config_path: str):
     with open(config_path, "r", encoding="utf-8") as f:
         cfg = json.load(f)
@@ -123,8 +120,6 @@ def levelcounts_from_perframelevels(pfl_slice: pd.DataFrame, indicator_order: li
     sums.index = pd.MultiIndex.from_tuples(sums.index, names=["indicator","level"])
     df = sums.unstack(level="level").fillna(0).astype(int)
     return order_levelcounts(df, indicator_order)
-
-# ---------------- 분기 프레임 계산 ----------------
 def compute_split_frames(semester: str, group: str, week_base: str,
                          df_info: pd.DataFrame, df_sess: pd.DataFrame):
     """
@@ -135,26 +130,22 @@ def compute_split_frames(semester: str, group: str, week_base: str,
     # 세션 CSV 필터
     sess = df_sess[(df_sess['학기']==semester) &
                    (df_sess['그룹명']==group) &
-                   (df_sess['주차'].str.startswith(week_base))].copy()
+                   (df_sess['주차'].eq(week_base))].copy()
     if sess.empty:
         return []
 
     sess['split_sec']  = sess['분기시간'].apply(hms_to_seconds)
     sess['to_session'] = sess['세션'].astype(int)
     sess = sess.sort_values(by=['to_session']).reset_index(drop=True)
-
-    # --- 23-2: 분기시간을 그대로 전역 프레임으로 사용 ---
     if str(semester).startswith("23-2"):
         out_frames = []
         for _, r in sess.iterrows():
             frame_idx = int(round(r['split_sec'] * FPS))
             out_frames.append(max(0, frame_idx))
         return out_frames
-
-    # --- 24-1 / 24-2: timeline_info 기반 매핑 ---
     info = df_info[(df_info['학기']==semester) &
                    (df_info['그룹명']==group) &
-                   (df_info['주차'].str.startswith(week_base))].copy()
+                   (df_info['주차'].eq(week_base))].copy()
     if info.empty:
         return []
 
@@ -204,8 +195,6 @@ def compute_split_frames(semester: str, group: str, week_base: str,
             out_frames.append(int(max(last['tl_end'] - 1, 0)))
 
     return out_frames
-
-# ---------------- n_members 계산 ----------------
 def semester_to_long(sem_short: str) -> str:
     # "24-1" -> "2024-1"
     parts = str(sem_short).split("-")
@@ -220,7 +209,7 @@ def compute_n_members_for_session(semester: str, group: str, week_base: str,
     """
     info = df_info[(df_info['학기']==semester) &
                    (df_info['그룹명']==group) &
-                   (df_info['주차'].str.startswith(week_base))].copy()
+                   (df_info['주차'].eq(week_base))].copy()
     if info.empty: return 0
 
     info['ver_int']   = info['파일버전'].apply(parse_version)
@@ -244,8 +233,6 @@ def compute_n_members_for_session(semester: str, group: str, week_base: str,
     if '인원수' in overlap.columns:
         return int(pd.to_numeric(overlap['인원수'], errors='coerce').fillna(0).max())
     return 0
-
-# ---------------- 주차 파일 → 세션 파일 생성 ----------------
 def split_week_file(week_path: str, df_info: pd.DataFrame, df_sess: pd.DataFrame, indicator_order: list):
     # 파일명에서 학기/그룹/주차 추출
     sem, grp, week = extract_sem_grp_week(week_path)

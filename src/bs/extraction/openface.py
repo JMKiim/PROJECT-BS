@@ -1,13 +1,14 @@
+"""Invoke the external OpenFace feature extractor."""
+from bs.settings import path, tool
 import subprocess
 import os
-import subprocess
 
 def process_video(args):
     input_video_path, output_dir = args
     os.makedirs(output_dir, exist_ok=True)
 
     base_filename = os.path.splitext(os.path.basename(input_video_path))[0]
-    OPENFACE_EXE = os.path.normpath("D:/OpenFace_2.2.0_win_x64/FeatureExtraction.exe")
+    OPENFACE_EXE = os.path.normpath(tool('openface_executable'))
 
     cmd = [
         OPENFACE_EXE,
@@ -26,7 +27,7 @@ def process_video(args):
             cmd,
             check=True,
             stdout=subprocess.DEVNULL,   # 출력 숨김
-            stderr=subprocess.DEVNULL    # 에러 숨김
+            stderr=None    # 에러 숨김
         )
         print(f"[완료] OpenFace 처리: {base_filename}.mp4 → {output_dir}")
     except subprocess.CalledProcessError as e:

@@ -1,0 +1,2 @@
+# Install the checkout in editable mode. Dependencies are defined in pyproject.toml.
+-e .

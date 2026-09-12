@@ -1,3 +1,5 @@
+"""Combine OpenFace features and motion energy; derive analysis columns."""
+from bs.settings import path, tool
 import os
 import pandas as pd
 import numpy as np
@@ -6,18 +8,7 @@ from tqdm import tqdm
 
 # FPS for pitch velocity calculation
 FPS = 15
-
-# ----------------------------
 # 감정 규칙 (AU_c 기반, 감정별 개별 threshold)
-# ----------------------------
-# AU_RULES = {
-#     'happy':     (['AU06_c', 'AU12_c'], 2),  # cheek raiser + lip corner puller
-#     'sad':       (['AU01_c', 'AU04_c', 'AU15_c'], 3),  # inner brow raiser, brow lowerer, lip corner depressor
-#     'anger':     (['AU04_c', 'AU05_c', 'AU07_c', 'AU23_c'], 4),  # brow lowerer, upper lid raiser, lid tightener, lip tightener
-#     'disgust':   (['AU09_c', 'AU15_c', 'AU16_c'], 3),  # nose wrinkler, lip corner depressor, lower lip depressor
-#     'fear':      (['AU01_c', 'AU02_c', 'AU04_c', 'AU05_c', 'AU07_c', 'AU20_c', 'AU26_c'], 7),  # multiple AU thresholds
-#     'surprise':  (['AU01_c', 'AU02_c', 'AU05_c', 'AU26_c'], 3),  # inner brow raiser, outer brow raiser, upper lid raiser, jaw drop
-# }
 AU_RULES = {
     'happy':     (['AU06_c', 'AU12_c'], 2),  # cheek raiser + lip corner puller
     'sad':       (['AU01_c', 'AU04_c', 'AU15_c'], 3),  # inner brow raiser, brow lowerer, lip corner depressor
@@ -36,20 +27,14 @@ VALENCE_MAPPING = {
     'disgust': 'negative',
     'fear': 'negative'
 }
-
-# ----------------------------
 # 감정 추론 함수
-# ----------------------------
 def predict_emotion_by_rule(row):
     for emotion, (aus, req) in AU_RULES.items():
         active = sum(row.get(au, 0) for au in aus)
         if active >= req:
             return emotion
     return 'neutral'
-
-# ----------------------------
 # bbox 넓이 계산
-# ----------------------------
 def calculate_bbox_area(row, filename=None):
     try:
         xs = np.array([float(row[f'x_{i}']) for i in range(68)])
@@ -61,10 +46,7 @@ def calculate_bbox_area(row, filename=None):
         else:
             print(f"[bbox 오류] {e}")
         return np.nan
-
-# ----------------------------
 # 개별 CSV 처리
-# ----------------------------
 def process_csv(csv_path):
     try:
         df = pd.read_csv(csv_path)
@@ -74,6 +56,8 @@ def process_csv(csv_path):
         gray_path = csv_path.replace('.csv', '_grayscaled.csv')
         if os.path.exists(gray_path):
             df_gray = pd.read_csv(gray_path)
+            if len(df) != len(df_gray):
+                raise ValueError("OpenFace and ME frame counts differ")
             overlap = set(df.columns) & set(df_gray.columns)
             df_gray_only = df_gray.drop(columns=list(overlap))
             df = pd.concat([df, df_gray_only], axis=1)
@@ -121,11 +105,8 @@ def process_csv(csv_path):
         print(f'[완료] {os.path.basename(new_path)} 저장됨')
 
     except Exception as e:
-        print(f'[에러] {csv_path} 처리 실패: {e}')
-
-# ----------------------------
+        raise RuntimeError(f"Augmentation failed: {csv_path}") from e
 # 전체 폴더 순회 병렬 처리
-# ----------------------------
 def process_folder(root_dir):
     csv_paths = []
     for folder, _, files in os.walk(root_dir):
@@ -136,11 +117,8 @@ def process_folder(root_dir):
     print(f'[시작] 총 {len(csv_paths)}개 파일 처리 중...')
     with Pool(cpu_count()) as pool:
         list(tqdm(pool.imap(process_csv, csv_paths), total=len(csv_paths)))
-
-# ----------------------------
 # 실행
-# ----------------------------
 if __name__ == '__main__':
-    # [수정] 전체 학기/그룹/주차를 처리하도록 루트 경로 설정
-    ROOT = 'D:/2025신윤희Data/MediaPipe'
+    # 전체 학기/그룹/주차를 처리하도록 루트 경로 설정
+    ROOT = str(path('features_dir'))
     process_folder(ROOT)

@@ -1,25 +1,21 @@
+"""Combine sessions and normalize frame counts to a 50-minute reference."""
+from bs.settings import path, tool
 import os
 import re
 import numpy as np
 import pandas as pd
 from typing import Optional
-
-# =========================
 # 경로 설정
-# =========================
-ROOT_OUT   = r"D:/2025EE_Final_Output"
-MASTER_IN  = os.path.join(ROOT_OUT, "temp_master.xlsx")          # 입력(세션 포함 Master)
-MASTER_OUT = os.path.join(ROOT_OUT, "master_temprocess.xlsx")      # 출력(세션 통합/정규화/CPS/가중치)
-CPS_PATH   = os.path.join(ROOT_OUT, "CPS_Score.xlsx")            # CPS 점수 파일(주차 단위 시트 사용)
+ROOT_OUT   = str(path('results_dir'))
+MASTER_IN  = str(path('normalization_input'))          # 입력(세션 포함 Master)
+MASTER_OUT = os.path.join(ROOT_OUT, "master_normalized.xlsx")      # 출력(세션 통합/정규화/CPS/가중치)
+CPS_PATH   = str(path('assessment_file'))            # CPS 점수 파일(주차 단위 시트 사용)
 
 # frames_k 고정 세트 (0~5 수준)
 K_COLS = [f"frames_k{i}" for i in range(6)]
 DERIVED_COLS = ["frames_half", "frames_duo"]  # 없으면 0으로 보완
 TARGET_FRAMES = 3000 * 15  # 50분 * 60초 * 15fps = 45,000
-
-# =========================
 # 유틸 함수
-# =========================
 def ensure_cols(df: pd.DataFrame, cols, fill_val=0):
     for c in cols:
         if c not in df.columns:
@@ -45,10 +41,7 @@ def _normalize_team_to_semester_team_id(semester_str, team_val):
     team = str(team_val).strip()
     team = re.sub(r"\s+", "", team)
     return f"{semester_str}-{team}"
-
-# =========================
 # CPS(주차 단위) 읽기
-# =========================
 def read_cps_scores_per_week(
     cps_path: str,
     sheet_name: str,
@@ -165,121 +158,108 @@ def read_all_cps_scores_week(cps_path: str) -> pd.DataFrame:
     for sheet_name, semester_long, hint in sheets:
         parts.append(read_cps_scores_per_week(CPS_PATH, sheet_name, semester_long, hint))
     return pd.concat(parts, ignore_index=True)
-
-# =========================
 # 1) 마스터 읽기 (세션 포함)
-# =========================
-df = pd.read_excel(MASTER_IN)
+def main():
+    df = pd.read_excel(MASTER_IN)
 
-# 기본 보정
-df["WEEK"] = df["WEEK"].apply(to_int_safe)
-df = ensure_cols(df, K_COLS + DERIVED_COLS, fill_val=0)
+    # 기본 보정
+    df["WEEK"] = df["WEEK"].apply(to_int_safe)
+    df = ensure_cols(df, K_COLS + DERIVED_COLS, fill_val=0)
+    # 2) 세션(phase) 머지: 같은 (학기+팀, 주차, 지표) 기준 합치기
+    agg_map = {c: "sum" for c in K_COLS + DERIVED_COLS}  # frames_* 합산
+    if "n_members" in df.columns:
+        agg_map["n_members"] = "max"                     # 세션 중 최대 인원
+    if "FPS" in df.columns:
+        agg_map["FPS"] = "first"
+    if "lookback_sec" in df.columns:
+        agg_map["lookback_sec"] = "first"
 
-# =========================
-# 2) 세션(phase) 머지: 같은 (학기+팀, 주차, 지표) 기준 합치기
-# =========================
-agg_map = {c: "sum" for c in K_COLS + DERIVED_COLS}  # frames_* 합산
-if "n_members" in df.columns:
-    agg_map["n_members"] = "max"                     # 세션 중 최대 인원
-if "FPS" in df.columns:
-    agg_map["FPS"] = "first"
-if "lookback_sec" in df.columns:
-    agg_map["lookback_sec"] = "first"
+    group_keys = ["SEMESTER_TEAM_ID", "WEEK", "measurement"]
+    present_keys = [k for k in group_keys if k in df.columns]
+    dfm = df.groupby(present_keys, as_index=False).agg(agg_map)
 
-group_keys = ["SEMESTER_TEAM_ID", "WEEK", "measurement"]
-present_keys = [k for k in group_keys if k in df.columns]
-dfm = df.groupby(present_keys, as_index=False).agg(agg_map)
+    # 세션 통합 후 PHASE는 불필요 → 있으면 삭제
+    dfm = dfm.drop(columns=["PHASE"], errors="ignore")
 
-# 세션 통합 후 PHASE는 불필요 → 있으면 삭제
-dfm = dfm.drop(columns=["PHASE"], errors="ignore")
+    # n_members 없으면 0으로
+    dfm = ensure_cols(dfm, ["n_members"], fill_val=0)
+    # 3) 50분(=45,000 프레임) 기준 정규화
+    sum_k = dfm[K_COLS].sum(axis=1).replace(0, np.nan)   # 0이면 NaN으로 두고 스케일 0 처리
+    scale = TARGET_FRAMES / sum_k
+    for c in K_COLS:
+        dfm[c] = (dfm[c] * scale).fillna(0.0)
 
-# n_members 없으면 0으로
-dfm = ensure_cols(dfm, ["n_members"], fill_val=0)
+    # 정규화된 frames_k 기반으로 frames_half/frames_duo 재계산
+    def frames_half_from_row(row):
+        nm = row.get("n_members", 0)
+        try:
+            nm = int(nm)
+        except:
+            nm = 0
+        kh = int(np.ceil(nm / 2.0))
+        kh = min(max(kh, 1), 5)  # 1..5로 클램프
+        return sum(row.get(f"frames_k{k}", 0.0) for k in range(kh, 6))
 
-# =========================
-# 3) 50분(=45,000 프레임) 기준 정규화
-# =========================
-sum_k = dfm[K_COLS].sum(axis=1).replace(0, np.nan)   # 0이면 NaN으로 두고 스케일 0 처리
-scale = TARGET_FRAMES / sum_k
-for c in K_COLS:
-    dfm[c] = (dfm[c] * scale).fillna(0.0)
+    def frames_duo_from_row(row):
+        return sum(row.get(f"frames_k{k}", 0.0) for k in range(2, 6))
 
-# 정규화된 frames_k 기반으로 frames_half/frames_duo 재계산
-def frames_half_from_row(row):
-    nm = row.get("n_members", 0)
-    try:
-        nm = int(nm)
-    except:
-        nm = 0
-    kh = int(np.ceil(nm / 2.0))
-    kh = min(max(kh, 1), 5)  # 1..5로 클램프
-    return sum(row.get(f"frames_k{k}", 0.0) for k in range(kh, 6))
+    dfm["frames_half"] = dfm.apply(frames_half_from_row, axis=1)
+    dfm["frames_duo"]  = dfm.apply(frames_duo_from_row,  axis=1)
+    # 4) 주차 단위 CPS 점수 병합
+    cps_week = read_all_cps_scores_week(CPS_PATH)
 
-def frames_duo_from_row(row):
-    return sum(row.get(f"frames_k{k}", 0.0) for k in range(2, 6))
+    # 기존 점수 컬럼 있으면 제거 후 재병합
+    dfm = dfm.drop(columns=["TOTAL", "CRITICAL", "CREATIVE"], errors="ignore")
+    dfm = dfm.merge(cps_week, on=["SEMESTER_TEAM_ID", "WEEK"], how="left")
+    # 5) 가중합 파생 칼럼 (정규화된 frames_k 기반)
+    weights_linear = {f"frames_k{k}": k for k in range(1, 6)}           # 1,2,3,4,5
+    weights_square = {f"frames_k{k}": (k**2) for k in range(1, 6)}       # 1,4,9,16,25
+    weights_exp    = {f"frames_k{k}": (10**(k-1)) for k in range(1, 6)}  # 1,10,100,1000,10000
 
-dfm["frames_half"] = dfm.apply(frames_half_from_row, axis=1)
-dfm["frames_duo"]  = dfm.apply(frames_duo_from_row,  axis=1)
+    def weighted_sum(row, weights):
+        return sum(row.get(col, 0.0) * w for col, w in weights.items())
 
-# =========================
-# 4) 주차 단위 CPS 점수 병합
-# =========================
-cps_week = read_all_cps_scores_week(CPS_PATH)
+    def weighted_sum_kmin(row, weights, k_min):
+        total = 0.0
+        for k in range(max(1, k_min), 6):  # 1..5
+            col = f"frames_k{k}"
+            total += row.get(col, 0.0) * weights.get(col, 0.0)
+        return total
 
-# 기존 점수 컬럼 있으면 제거 후 재병합
-dfm = dfm.drop(columns=["TOTAL", "CRITICAL", "CREATIVE"], errors="ignore")
-dfm = dfm.merge(cps_week, on=["SEMESTER_TEAM_ID", "WEEK"], how="left")
+    # 전체
+    dfm["LINEAR"]      = dfm.apply(lambda r: weighted_sum(r, weights_linear), axis=1)
+    dfm["SQUARE"]      = dfm.apply(lambda r: weighted_sum(r, weights_square), axis=1)
+    dfm["EXPONENTIAL"] = dfm.apply(lambda r: weighted_sum(r, weights_exp), axis=1)
 
-# =========================
-# 5) 가중합 파생 칼럼 (정규화된 frames_k 기반)
-# =========================
-weights_linear = {f"frames_k{k}": k for k in range(1, 6)}           # 1,2,3,4,5
-weights_square = {f"frames_k{k}": (k**2) for k in range(1, 6)}       # 1,4,9,16,25
-weights_exp    = {f"frames_k{k}": (10**(k-1)) for k in range(1, 6)}  # 1,10,100,1000,10000
+    # half (k >= ceil(n_members/2))
+    def k_half_min(row):
+        nm = row.get("n_members", 0)
+        try:
+            nm = int(nm)
+        except:
+            nm = 0
+        kh = int(np.ceil(nm / 2.0))
+        return min(max(kh, 1), 5)
 
-def weighted_sum(row, weights):
-    return sum(row.get(col, 0.0) * w for col, w in weights.items())
+    dfm["LINEAR_half"]      = dfm.apply(lambda r: weighted_sum_kmin(r, weights_linear, k_half_min(r)), axis=1)
+    dfm["SQUARE_half"]      = dfm.apply(lambda r: weighted_sum_kmin(r, weights_square, k_half_min(r)), axis=1)
+    dfm["EXPONENTIAL_half"] = dfm.apply(lambda r: weighted_sum_kmin(r, weights_exp,  k_half_min(r)), axis=1)
 
-def weighted_sum_kmin(row, weights, k_min):
-    total = 0.0
-    for k in range(max(1, k_min), 6):  # 1..5
-        col = f"frames_k{k}"
-        total += row.get(col, 0.0) * weights.get(col, 0.0)
-    return total
+    # duo (k >= 2)
+    dfm["LINEAR_duo"]      = dfm.apply(lambda r: weighted_sum_kmin(r, weights_linear, 2), axis=1)
+    dfm["SQUARE_duo"]      = dfm.apply(lambda r: weighted_sum_kmin(r, weights_square, 2), axis=1)
+    dfm["EXPONENTIAL_duo"] = dfm.apply(lambda r: weighted_sum_kmin(r, weights_exp,    2), axis=1)
+    # 6) 정렬 & 저장 (Master + measurement별 시트)
+    dfm = dfm.sort_values(by=["SEMESTER_TEAM_ID", "WEEK", "measurement"]).reset_index(drop=True)
 
-# 전체
-dfm["LINEAR"]      = dfm.apply(lambda r: weighted_sum(r, weights_linear), axis=1)
-dfm["SQUARE"]      = dfm.apply(lambda r: weighted_sum(r, weights_square), axis=1)
-dfm["EXPONENTIAL"] = dfm.apply(lambda r: weighted_sum(r, weights_exp), axis=1)
+    with pd.ExcelWriter(MASTER_OUT, engine="openpyxl") as writer:
+        dfm.to_excel(writer, sheet_name="Master", index=False)
+        for m in dfm["measurement"].astype(str).unique():
+            sub = dfm[dfm["measurement"].astype(str) == m].copy()
+            sub.to_excel(writer, sheet_name=m[:31], index=False)  # 시트명 31자 제한
 
-# half (k >= ceil(n_members/2))
-def k_half_min(row):
-    nm = row.get("n_members", 0)
-    try:
-        nm = int(nm)
-    except:
-        nm = 0
-    kh = int(np.ceil(nm / 2.0))
-    return min(max(kh, 1), 5)
+    print(f"[OK] Saved → {MASTER_OUT}")
 
-dfm["LINEAR_half"]      = dfm.apply(lambda r: weighted_sum_kmin(r, weights_linear, k_half_min(r)), axis=1)
-dfm["SQUARE_half"]      = dfm.apply(lambda r: weighted_sum_kmin(r, weights_square, k_half_min(r)), axis=1)
-dfm["EXPONENTIAL_half"] = dfm.apply(lambda r: weighted_sum_kmin(r, weights_exp,  k_half_min(r)), axis=1)
 
-# duo (k >= 2)
-dfm["LINEAR_duo"]      = dfm.apply(lambda r: weighted_sum_kmin(r, weights_linear, 2), axis=1)
-dfm["SQUARE_duo"]      = dfm.apply(lambda r: weighted_sum_kmin(r, weights_square, 2), axis=1)
-dfm["EXPONENTIAL_duo"] = dfm.apply(lambda r: weighted_sum_kmin(r, weights_exp,    2), axis=1)
-
-# =========================
-# 6) 정렬 & 저장 (Master + measurement별 시트)
-# =========================
-dfm = dfm.sort_values(by=["SEMESTER_TEAM_ID", "WEEK", "measurement"]).reset_index(drop=True)
-
-with pd.ExcelWriter(MASTER_OUT, engine="openpyxl") as writer:
-    dfm.to_excel(writer, sheet_name="Master", index=False)
-    for m in dfm["measurement"].astype(str).unique():
-        sub = dfm[dfm["measurement"].astype(str) == m].copy()
-        sub.to_excel(writer, sheet_name=m[:31], index=False)  # 시트명 31자 제한
-
-print(f"[OK] Saved → {MASTER_OUT}")
+if __name__ == "__main__":
+    main()

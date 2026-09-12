@@ -1,27 +1,60 @@
+# Local configuration and research material
+configs/*.local.json
+.local/
+data/
+results/
+outputs/
+papers/
+toolboxes/
+*.csv
+*.tsv
+*.xlsx
+*.xls
+*.pdf
+*.docx
+*.pptx
+*.mp4
+*.mov
+*.avi
+*.mkv
+*.wav
+*.mp3
+*.mat
+*.nirs
+*.snirf
+*.zip
+*.7z
+
+# Python and editor files
 __pycache__/
-cropped_persons/
-*.log
-*.bak
-*.tmp
-Thumbs.db
-.DS_Store
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+build/
+dist/
+.pytest_cache/
 .vscode/
 .idea/
+*.log
+*.tmp
+*.bak
+Thumbs.db
+.DS_Store
 
-# Legacy/One-off Scripts
-legacy/
-crop_for_23-2.py
-leagacy_visualizer.py
-23-2downsample.py
-pyfeattest.py
-check_header.py
-test.py
-pyfeat_test/
-uncompress.py
-single_video_crop.py
-compute_deepface_analysis.py
+# Images are opt-in publication assets.
+*.png
+*.jpg
+*.jpeg
+*.webp
+*.gif
+*.tif
+*.tiff
+!docs/assets/behavioral-synchrony.png
+!docs/assets/study-setup.png
 
-# Temp Configs/Data
-temp_session_timeline.csv
-temp_timeline.csv
-config_indicators_temp.json
+# Credentials and local environment files
+.env
+.env.*
+*.pem
+*.key

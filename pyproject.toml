@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "project-bs"
+version = "0.2.0"
+description = "Behavioral synchrony analysis from facial and motion signals"
+requires-python = ">=3.10"
+dependencies = [
+  "numpy", "pandas", "opencv-python", "matplotlib", "openpyxl", "tqdm"
+]
+
+[project.scripts]
+bs = "bs.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+"bs.synchrony" = ["*.m"]

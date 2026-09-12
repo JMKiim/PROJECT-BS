@@ -1,3 +1,5 @@
+"""Export synchrony masks and optionally render a timeline video."""
+from bs.settings import path, tool
 import os
 import json
 import cv2
@@ -14,11 +16,8 @@ from threading import Thread
 from queue import Queue, Empty
 from openpyxl.styles import PatternFill, Font
 
-MAKE_VIDEO = False  # ← 여기만 True/False로 바꿔 쓰면 됨
-
-# ----------------------------
+MAKE_VIDEO = False
 # 글로벌 폰트 설정 (전체 폰트 크기 축소)
-# ----------------------------
 plt.rcParams.update({
     'font.size': 8,              # 기본 폰트 크기
     'axes.titlesize': 8,         # 서브플롯 제목
@@ -28,10 +27,7 @@ plt.rcParams.update({
     'legend.fontsize': 8,        # 범례
     'figure.titlesize': 10       # 전체 figure 제목 (없을 경우 무시)
 })
-
-# ----------------------------
 # 설정
-# ----------------------------
 FPS = 15
 FRAME_WIDTH = 228
 FRAME_HEIGHT = 128
@@ -39,10 +35,7 @@ WINDOW_SECONDS = 60
 STEP_FRAMES = WINDOW_SECONDS * FPS
 OUTPUT_NAME = "test.mp4"
 SHADING_FREQ = FPS  # 초당 한 번만 음영 업데이트
-
-# ----------------------------
 # FrameLoader: 비디오 프레임 프리패칭
-# ----------------------------
 class FrameLoader:
     def __init__(self, cap, maxsize=30):
         self.cap = cap
@@ -72,10 +65,7 @@ class FrameLoader:
                 self.q.get(False)
         except Empty:
             pass
-
-# ----------------------------
 # 타임라인 데이터 로드
-# ----------------------------
 def open_timeline_data(timeline_dir, config_path, start_frame):
     start = time.time()
     with open(config_path, 'r', encoding='utf-8') as f:
@@ -101,129 +91,15 @@ def open_timeline_data(timeline_dir, config_path, start_frame):
                     caps[pid] = FrameLoader(cap)
                     break
     print(f"[TIME] Data loading: {time.time() - start:.2f}s")
+    if not data_dict:
+        return config, global_stats, data_dict, caps, 0
+    lengths = {len(df) for df in data_dict.values()}
+    if len(lengths) != 1:
+        raise ValueError("Participant CSV lengths differ; align inputs before analysis")
     return config, global_stats, data_dict, caps, int(total_frames)
-
-# ----------------------------
 # nod 이벤트 탐지 (펄스 기반)
-# ----------------------------
-def detect_nod_events(arr, fall_thresh, rise_thresh, max_dur, min_cyc, fps):
-    # stop_thresh 파라미터는 더 이상 사용하지 않음
-    mask = np.zeros_like(arr, dtype=int)
-    state = 'idle'
-    cycle_count = 0
-    event_start = None
-    max_frames = int(max_dur * fps)
-    for i, v in enumerate(arr):
-        if state == 'idle':
-            if v > fall_thresh:
-                state = 'down'
-                event_start = i
-        elif state == 'down':
-            if v < rise_thresh:
-                cycle_count += 1
-                if cycle_count >= min_cyc and event_start is not None and (i - event_start) <= max_frames:
-                    mask[i] = 1  # 주기 완료 시점에 펄스 마킹
-                    state = 'idle'
-                    cycle_count = 0
-                    event_start = None
-        # 최대 지속시간 초과 시 초기화
-        if event_start is not None and (i - event_start) > max_frames:
-            state = 'idle'
-            cycle_count = 0
-            event_start = None
-    return mask
+from bs.synchrony.core import detect_nod_events, calculate_synchrony_mask
 
-# ----------------------------
-# 동시성 마스크 계산
-# ----------------------------
-def calculate_synchrony_mask(data_dict, config, global_stats):
-    start = time.time()
-    masks = {}
-    for name, cfg in config.items():
-        ctype = cfg.get('type')
-        win = int(cfg.get('sync_window', 1.0) * FPS)
-
-        # Numeric & Categorical
-        if ctype in ('numeric', 'categorical'):
-            thr = cfg.get('threshold_std', 2.0)
-            mode = cfg.get('sync_direction', 'same')
-            mats_above, mats_below = [], []
-            for pid, df in data_dict.items():
-                if ctype == 'numeric':
-                    raw = df[cfg['column']].astype(float).values
-                else:
-                    raw = df[cfg['column']].fillna('neutral') \
-                          .map(cfg['mapping']).fillna(0).astype(float).values
-                succ = (df['success'].astype(int).values == 1) if 'success' in df.columns else np.ones_like(raw, bool)
-                if cfg.get('zscore', False):
-                    m, s = global_stats[pid][name]['mean'], global_stats[pid][name]['std']
-                    raw = (raw - m) / s
-                mats_above.append((raw > thr) & succ)
-                mats_below.append((raw < -thr) & succ)
-            mats_above = np.vstack(mats_above)
-            mats_below = np.vstack(mats_below)
-            ext_above = np.zeros_like(mats_above, dtype=bool)
-            ext_below = np.zeros_like(mats_below, dtype=bool)
-            for idx in range(mats_above.shape[0]):
-                r_ab, r_bl = mats_above[idx], mats_below[idx]
-                ext_r_ab = np.zeros_like(r_ab)
-                ext_r_bl = np.zeros_like(r_bl)
-                for t in range(len(r_ab)):
-                    start_t = max(0, t - win)
-                    if r_ab[start_t:t+1].any(): ext_r_ab[t] = True
-                    if r_bl[start_t:t+1].any(): ext_r_bl[t] = True
-                ext_above[idx] = ext_r_ab
-                ext_below[idx] = ext_r_bl
-            if mode == 'any':
-                # sync = ext_above.sum(axis=0) + ext_below.sum(axis=0)
-                sync = np.logical_or(ext_above, ext_below).sum(axis=0)
-            elif mode == 'same':
-                sync = np.maximum(ext_above.sum(axis=0), ext_below.sum(axis=0))
-            elif mode == 'positive':
-                sync = ext_above.sum(axis=0)
-            elif mode == 'negative':
-                sync = ext_below.sum(axis=0)
-            else:
-                sync = np.zeros_like(ext_above.sum(axis=0), dtype=int)
-            masks[name] = sync
-
-        # Event
-        elif ctype == 'event':
-            params = cfg['event_params']
-            fall = params.get('fall_z_thresh', 1.0)
-            rise = params.get('rise_z_thresh', -1.0)
-            md   = params.get('max_duration', 0.6)
-            mc   = params.get('min_cycles', 1)
-            mats = []
-            for pid, df in data_dict.items():
-                raw = df[cfg['column']].astype(float).values
-                succ = (df['success'].astype(int).values == 1) if 'success' in df.columns else np.ones_like(raw, bool)
-                if cfg.get('zscore', False):
-                    m, s = global_stats[pid][name]['mean'], global_stats[pid][name]['std']
-                    raw = (raw - m) / s
-                ev = detect_nod_events(raw, fall, rise, md, mc, FPS).astype(bool)
-                # ★ success 적용
-                ev = ev & succ
-                mats.append(ev)
-            mats = np.vstack(mats)
-            ext = np.zeros_like(mats, dtype=bool)
-            for idx in range(mats.shape[0]):
-                r = mats[idx]
-                ext_r = np.zeros_like(r)
-                for t in range(len(r)):
-                    start_t = max(0, t - win)
-                    if r[start_t:t+1].any(): ext_r[t] = True
-                ext[idx] = ext_r
-            masks[name] = ext.sum(axis=0)
-        else:
-            continue
-
-    print(f"[TIME] Synchrony mask calc: {time.time()-start:.2f}s")
-    return masks
-
-# ----------------------------
-# 메인 시각화
-# ----------------------------
 def visualize_timeline_optimized(timeline_dir, config_path, start_time=None, end_time=None):
     total_start = time.time()
     sf = 0 if start_time is None else int(start_time * FPS)
@@ -233,28 +109,23 @@ def visualize_timeline_optimized(timeline_dir, config_path, start_time=None, end
     if not data_dict:
         print('[SKIP] No data')
         return
-    
+
     pids = list(data_dict.keys())
     indicators = list(config.items())
     colors = plt.cm.tab10.colors
 
     sync_masks = calculate_synchrony_mask(data_dict, config, global_stats)
 
-    # 사용자가 직접 지정할 하이라이트 지표 리스트 (원하는 지표명을 추가)
+    # Indicators highlighted in the count workbook.
     HIGHLIGHT_INDICATORS = [
         "face_distance"
     ]
-
-    # ----------------------------
     # 동시성 카운트 결과 CSV 저장 (wide format)
-    # ----------------------------
     def _sanitize_sheet_name(name: str) -> str:
         return re.sub(r'[:\\/?*\[\]]', '_', str(name))[:31]
 
     sync_xlsx = os.path.join(timeline_dir, 'sync_counts.xlsx')
     max_p = len(pids)
-
-    # --- [추가] 경로로부터 메타 정보 추출 ---
     parts = os.path.normpath(timeline_dir).split(os.sep)
     semester_raw = parts[-4]   # "24-1"
     group = parts[-3]          # "A4"
@@ -265,7 +136,6 @@ def visualize_timeline_optimized(timeline_dir, config_path, start_time=None, end
     semester = sem_num         # "1"
 
     with pd.ExcelWriter(sync_xlsx, engine='openpyxl') as writer:
-        # --- [추가] 1) Meta 시트를 '가장 먼저' 기록해서 엑셀 첫 탭이 되도록 ---
         df_meta = pd.DataFrame([{
             "year": year,
             "semester": semester,
@@ -276,21 +146,14 @@ def visualize_timeline_optimized(timeline_dir, config_path, start_time=None, end
             "total_frames": total_frames
         }])
         df_meta.to_excel(writer, sheet_name="Meta", index=False)
-
-        # --- 2) 기존 지표별 동시성 카운트 시트들 (기능 유지) ---
         for ind_name, mask in sync_masks.items():
-            # 0~max_p 동시 인원수 카운트 (기존 로직 유지)
             counts = [int((mask == i).sum()) for i in range(max_p + 1)]
-
-            # wide 테이블 (기존 로직 유지)
             df_one = pd.DataFrame([counts], columns=[str(i) for i in range(max_p + 1)])
             df_one.index = [ind_name]
             df_one.index.name = "indicator"
 
             sheet_name = _sanitize_sheet_name(ind_name)
             df_one.to_excel(writer, sheet_name=sheet_name, index=True)
-
-            # 하이라이트 (기존 로직 유지)
             if ind_name in HIGHLIGHT_INDICATORS:
                 ws = writer.sheets[sheet_name]
                 name_cell = ws.cell(row=2, column=1)  # A2
@@ -298,10 +161,7 @@ def visualize_timeline_optimized(timeline_dir, config_path, start_time=None, end
                 name_cell.font = Font(bold=True)
 
     print(f"[완료] 동시성 결과 저장 → {sync_xlsx}")
-
-    # ----------------------------
     # 프레임별 개별 행동 마스크 저장 (원시 -1/0/1 → Excel + 분석 시트)
-    # ----------------------------
     mask_xlsx = os.path.join(timeline_dir, 'sync_mask.xlsx')
     mask_dict = {}
 
@@ -362,14 +222,12 @@ def visualize_timeline_optimized(timeline_dir, config_path, start_time=None, end
     mask_df = pd.DataFrame(mask_dict)
     mask_df.index.name = 'frame'
     mask_df.columns = pd.MultiIndex.from_tuples(mask_df.columns, names=['indicator','pid'])
-
-    # ---------- (A) 지표/참가자 표시 순서 고정 ----------
     indicator_order = list(config.keys())      # config 정의 순서
     pid_order       = list(data_dict.keys())   # 로딩된 참가자 순서
     # 존재하는 컬럼만 유지하여 재인덱싱
     from itertools import product
     desired_cols = [c for c in product(indicator_order, pid_order) if c in set(mask_df.columns)]
-    mask_df = mask_df.reindex(columns=pd.MultiIndex.from_tuples(desired_cols, names=['indicator','pid']), copy=False)
+    mask_df = mask_df.reindex(columns=pd.MultiIndex.from_tuples(desired_cols, names=['indicator','pid']))
 
     # 2) calculate_synchrony_mask와 동일한 규칙으로 재집계 (윈도 확장 + 방향 모드, any=합집합)
     def _extend_bool(b: np.ndarray, win: int) -> np.ndarray:
@@ -410,7 +268,7 @@ def visualize_timeline_optimized(timeline_dir, config_path, start_time=None, end
         elif mode == 'same':
             levels = np.maximum(pos_levels, neg_levels)
         elif mode == 'any':
-            # ★ any = 합집합(OR) → 0..P
+            # any = 합집합(OR) → 0..P
             levels = np.logical_or(ext_above, ext_below).sum(axis=1)
         else:
             levels = np.zeros_like(pos_levels, dtype=int)
@@ -431,7 +289,6 @@ def visualize_timeline_optimized(timeline_dir, config_path, start_time=None, end
     perframe_df.columns = pd.MultiIndex.from_tuples(perframe_df.columns, names=['indicator', 'level'])
     perframe_df = perframe_df.reindex(
         columns=pd.MultiIndex.from_product([indicator_order, level_cols]),
-        copy=False
     )
     perframe_df.index.name = 'frame'
 
@@ -462,7 +319,7 @@ def visualize_timeline_optimized(timeline_dir, config_path, start_time=None, end
     if not MAKE_VIDEO:
         print("[정보] MAKE_VIDEO=False: 시각화 영상 렌더링을 건너뜁니다.")
         return
-    
+
     raw_vals = [[None] * len(pids) for _ in indicators]
     for i, (name, icfg) in enumerate(indicators):
         for j, pid in enumerate(pids):
@@ -527,6 +384,7 @@ def visualize_timeline_optimized(timeline_dir, config_path, start_time=None, end
             leg.set_zorder(2)
 
     plt.tight_layout()
+    plt.rcParams['animation.ffmpeg_path'] = tool('ffmpeg')
     writer = FFMpegWriter(fps=FPS)
     out_path = os.path.join(timeline_dir, OUTPUT_NAME)
     writer.setup(fig, out_path, dpi=150)
@@ -557,7 +415,7 @@ def visualize_timeline_optimized(timeline_dir, config_path, start_time=None, end
             tick_step = FPS * 10
             tick_indices = np.arange(0, len(x), tick_step)
             ax.set_xticks(x[tick_indices])
-            ax.set_xticklabels([x_labels[i] for i in tick_indices], rotation=0)  # ⬅ 수평 출력
+            ax.set_xticklabels([x_labels[i] for i in tick_indices], rotation=0)
             # update shading
             if f % SHADING_FREQ == 0:
                 vals = sync_masks[name][start_win:end_win]
@@ -582,9 +440,4 @@ def visualize_timeline_optimized(timeline_dir, config_path, start_time=None, end
     print(f"[완료] 시각화 저장됨 → {out_path}")
 
 if __name__ == '__main__':
-    visualize_timeline_optimized(
-        timeline_dir="D:/2025신윤희Data/MediaPipe/23-2/C/W3/T1",
-        config_path="config_indicators.json",
-        start_time=0,
-        end_time=0
-    )
+    raise SystemExit('Use bs events with explicit timeline filters and --video to render.')
